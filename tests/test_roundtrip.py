@@ -148,6 +148,19 @@ class TestCorruptionDetection(RoundTripCase):
         with self.assertRaises(CorruptBlockError):
             decompress(comp, rest)
 
+    def test_corrupt_header_detected(self):
+        src, comp, rest = (self.path(n) for n in ("src", "comp", "rest"))
+        with open(src, "wb") as f:
+            f.write(b"".join(synth_rows(random.Random(14), 50)))
+        compress(src, comp)
+        with open(comp, "rb") as f:
+            blob = bytearray(f.read())
+        blob[20] ^= 0x01  # inside the header JSON (pexp/sexp region)
+        with open(comp, "wb") as f:
+            f.write(blob)
+        with self.assertRaises(FormatError):
+            decompress(comp, rest)
+
     def test_truncation_detected(self):
         src, comp, rest = (self.path(n) for n in ("src", "comp", "rest"))
         with open(src, "wb") as f:

@@ -1,20 +1,21 @@
 """Streaming decoder: blocks -> original lines, byte-exact by construction."""
 from .arith import Decoder
-from .codec import EscapeModels, IntModels, SizeModels
+from .codec import (EscapeModels, IntModels, NIBBLE_INT_STREAMS,
+                    NIBBLE_SIZE_STREAMS, SizeModels)
 from .format import (ByteReader, FormatError, SEGMENT_NAMES, read_block,
                      read_header)
 from .transforms import Schema, unzigzag
 
 
-def _decode_ints(seg, count):
+def _decode_ints(seg, count, name):
     dec = Decoder(seg)
-    bank = IntModels()
+    bank = IntModels(nibble=name in NIBBLE_INT_STREAMS)
     return [bank.decode(dec) for _ in range(count)]
 
 
-def _decode_sizes(seg, count):
+def _decode_sizes(seg, count, name):
     dec = Decoder(seg)
-    bank = SizeModels()
+    bank = SizeModels(nibble=name in NIBBLE_SIZE_STREAMS)
     return [bank.decode(dec) for _ in range(count)]
 
 
@@ -48,22 +49,24 @@ def decode_block(payload, schema, fout, block_index):
         raise FormatError(f"block {block_index}: rows present but header "
                           f"has no schema")
 
-    len_b = _decode_ints(segs["len_b"], n_rows)
-    len_a = _decode_ints(segs["len_a"], n_rows)
-    e_ms = _decode_ints(segs["e_ms"], n_rows)
-    recv = _decode_ints(segs["recv"], n_rows)
-    u_gap = _decode_ints(segs["u_gap"], n_rows)
-    u_span = _decode_ints(segs["u_span"], n_rows)
+    len_b = _decode_ints(segs["len_b"], n_rows, "len_b")
+    len_a = _decode_ints(segs["len_a"], n_rows, "len_a")
+    e_ms = _decode_ints(segs["e_ms"], n_rows, "e_ms")
+    recv = _decode_ints(segs["recv"], n_rows, "recv")
+    u_gap = _decode_ints(segs["u_gap"], n_rows, "u_gap")
+    u_span = _decode_ints(segs["u_span"], n_rows, "u_span")
     bid_anchor = iter(_decode_ints(segs["bid_anchor"],
-                                   sum(1 for n in len_b if n)))
+                                   sum(1 for n in len_b if n), "bid_anchor"))
     bid_delta = iter(_decode_ints(segs["bid_delta"],
-                                  sum(n - 1 for n in len_b if n)))
+                                  sum(n - 1 for n in len_b if n),
+                                  "bid_delta"))
     ask_anchor = iter(_decode_ints(segs["ask_anchor"],
-                                   sum(1 for n in len_a if n)))
+                                   sum(1 for n in len_a if n), "ask_anchor"))
     ask_delta = iter(_decode_ints(segs["ask_delta"],
-                                  sum(n - 1 for n in len_a if n)))
-    size_b = iter(_decode_sizes(segs["size_b"], sum(len_b)))
-    size_a = iter(_decode_sizes(segs["size_a"], sum(len_a)))
+                                  sum(n - 1 for n in len_a if n),
+                                  "ask_delta"))
+    size_b = iter(_decode_sizes(segs["size_b"], sum(len_b), "size_b"))
+    size_a = iter(_decode_sizes(segs["size_a"], sum(len_a), "size_a"))
     escapes = iter(_decode_escapes(segs["escape"], n_esc))
 
     esc_set = set(esc_indices)

@@ -1,11 +1,16 @@
 """Streaming encoder: lines -> blocks of per-stream coded segments."""
 from .arith import Encoder
-from .codec import EscapeModels, IntModels, SizeModels
+from .codec import (EscapeModels, IntModels, NIBBLE_INT_STREAMS,
+                    NIBBLE_SIZE_STREAMS, SizeModels)
 from .format import (append_uvarint, write_block, write_eof, write_header)
 from .transforms import Schema, extract_candidate, infer_qexp, zigzag
 
-DEFAULT_BLOCK_LINES = 4096
-DEFAULT_BLOCK_BYTES = 1 << 24   # cap raw bytes per block: bounds memory
+# 16384-line blocks: large enough that adaptive warm-up redundancy per
+# context stays within the 5% entropy-gap budget (measured; NOTES.md),
+# small enough to bound memory (~25 MB raw per block on sample-like data,
+# hard-capped by DEFAULT_BLOCK_BYTES) and localise corruption.
+DEFAULT_BLOCK_LINES = 16384
+DEFAULT_BLOCK_BYTES = 1 << 25
 
 
 def _infer_schema(lines):
@@ -27,17 +32,17 @@ def _infer_schema(lines):
     return Schema(constants, pexp, sexp)
 
 
-def _encode_int_segment(values, track):
+def _encode_int_segment(values, track, nibble):
     enc = Encoder()
-    bank = IntModels(track=track)
+    bank = IntModels(track=track, nibble=nibble)
     for z in values:
         bank.encode(enc, z)
     return enc.finish(), bank
 
 
-def _encode_size_segment(values, track):
+def _encode_size_segment(values, track, nibble):
     enc = Encoder()
-    bank = SizeModels(track=track)
+    bank = SizeModels(track=track, nibble=nibble)
     for v in values:
         bank.encode(enc, v)
     return enc.finish(), bank
@@ -101,10 +106,12 @@ def encode_block(lines, schema, stats=None):
     segments = []
     for name in ("e_ms", "recv", "u_gap", "u_span", "len_b", "len_a",
                  "bid_anchor", "bid_delta", "ask_anchor", "ask_delta"):
-        seg, bank = _encode_int_segment(cols[name], track)
+        seg, bank = _encode_int_segment(cols[name], track,
+                                        name in NIBBLE_INT_STREAMS)
         segments.append((name, seg, bank))
     for name in ("size_b", "size_a"):
-        seg, bank = _encode_size_segment(cols[name], track)
+        seg, bank = _encode_size_segment(cols[name], track,
+                                         name in NIBBLE_SIZE_STREAMS)
         segments.append((name, seg, bank))
     seg, bank = _encode_escape_segment(esc_blobs, track)
     segments.append(("escape", seg, bank))

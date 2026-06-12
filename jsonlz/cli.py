@@ -29,8 +29,8 @@ def main(argv=None):
     p = sub.add_parser("compress", help="compress a JSONL file")
     p.add_argument("input")
     p.add_argument("output")
-    p.add_argument("--block-lines", type=int, default=4096,
-                   help="max lines per block (default 4096)")
+    p.add_argument("--block-lines", type=int, default=16384,
+                   help="max lines per block (default 16384)")
 
     p = sub.add_parser("decompress", help="restore the original file")
     p.add_argument("input")

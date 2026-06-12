@@ -13,41 +13,73 @@ from .arith import AdaptiveModel
 
 MAX_INT_BYTES = 10  # covers zigzag of any |v| < 2^79; transforms bound at 2^62
 
+# Per-stream bank layout, fixed by format v1 (FORMAT.md §6): nibble
+# banks for the sparse per-row streams, byte banks for the four
+# high-volume per-level streams. Measured justification in NOTES.md.
+NIBBLE_INT_STREAMS = frozenset((
+    "e_ms", "recv", "u_gap", "u_span", "len_b", "len_a",
+    "bid_anchor", "ask_anchor",
+))
+NIBBLE_SIZE_STREAMS = frozenset()
+
 
 class IntModels:
-    """Codes non-negative integers (callers zigzag signed values first)."""
+    """Codes non-negative integers (callers zigzag signed values first).
 
-    __slots__ = ("len_model", "byte_models", "track")
+    Two bank layouts with identical conditional entropy but different
+    adaptation cost (chain rule: H(hi|c) + H(lo|c,hi) = H(byte|c)):
 
-    def __init__(self, track=False):
+    - byte mode: one 256-ary model per (length, position). Cheapest per
+      symbol; right for high-volume streams where warm-up is amortised.
+    - nibble mode: a 16-ary model per (length, position) for the high
+      nibble, and one per (length, position, high) for the low nibble.
+      A fresh context pays a <=16-symbol uniform prior instead of 256,
+      which is what keeps sparse streams inside the 5% entropy gap
+      under per-block model resets.
+    """
+
+    __slots__ = ("len_model", "sub_models", "nibble", "track")
+
+    def __init__(self, track=False, nibble=False):
         self.len_model = AdaptiveModel(MAX_INT_BYTES, track=track)
-        self.byte_models = {}
+        self.sub_models = {}
+        self.nibble = nibble
         self.track = track
 
-    def _byte_model(self, k, pos):
-        m = self.byte_models.get((k, pos))
+    def _model(self, key, alphabet):
+        m = self.sub_models.get(key)
         if m is None:
-            m = self.byte_models[(k, pos)] = AdaptiveModel(256,
-                                                           track=self.track)
+            m = self.sub_models[key] = AdaptiveModel(alphabet,
+                                                     track=self.track)
         return m
 
     def encode(self, enc, z):
         k = (z.bit_length() + 7) >> 3 or 1
         self.len_model.encode(enc, k - 1)
         for pos in range(k):
-            self._byte_model(k, pos).encode(
-                enc, (z >> ((k - 1 - pos) << 3)) & 0xFF)
+            b = (z >> ((k - 1 - pos) << 3)) & 0xFF
+            if self.nibble:
+                hi = b >> 4
+                self._model((k, pos), 16).encode(enc, hi)
+                self._model((k, pos, hi), 16).encode(enc, b & 15)
+            else:
+                self._model((k, pos), 256).encode(enc, b)
 
     def decode(self, dec):
         k = self.len_model.decode(dec) + 1
         z = 0
         for pos in range(k):
-            z = (z << 8) | self._byte_model(k, pos).decode(dec)
+            if self.nibble:
+                hi = self._model((k, pos), 16).decode(dec)
+                b = (hi << 4) | self._model((k, pos, hi), 16).decode(dec)
+            else:
+                b = self._model((k, pos), 256).decode(dec)
+            z = (z << 8) | b
         return z
 
     def models(self):
         yield self.len_model
-        yield from self.byte_models.values()
+        yield from self.sub_models.values()
 
 
 class SizeModels:
@@ -55,9 +87,9 @@ class SizeModels:
 
     __slots__ = ("flag", "val")
 
-    def __init__(self, track=False):
+    def __init__(self, track=False, nibble=False):
         self.flag = AdaptiveModel(2, track=track)
-        self.val = IntModels(track=track)
+        self.val = IntModels(track=track, nibble=nibble)
 
     def encode(self, enc, v):
         if v == 0:
@@ -77,26 +109,32 @@ class SizeModels:
 
 
 class EscapeModels:
-    """Escape lines verbatim: byte length, then order-1 coded raw bytes."""
+    """Escape lines verbatim: byte length, then order-1 coded raw bytes.
+
+    Raw bytes use the nibble split with the previous byte as context
+    (escape traffic is sparse by design, so warm-up cost dominates).
+    """
 
     __slots__ = ("length", "byte_ctx", "track")
 
     def __init__(self, track=False):
-        self.length = IntModels(track=track)
+        self.length = IntModels(track=track, nibble=True)
         self.byte_ctx = {}
         self.track = track
 
-    def _ctx(self, prev):
-        m = self.byte_ctx.get(prev)
+    def _ctx(self, key):
+        m = self.byte_ctx.get(key)
         if m is None:
-            m = self.byte_ctx[prev] = AdaptiveModel(256, track=self.track)
+            m = self.byte_ctx[key] = AdaptiveModel(16, track=self.track)
         return m
 
     def encode(self, enc, blob):
         self.length.encode(enc, len(blob))
         prev = 0
         for b in blob:
-            self._ctx(prev).encode(enc, b)
+            hi = b >> 4
+            self._ctx((prev,)).encode(enc, hi)
+            self._ctx((prev, hi)).encode(enc, b & 15)
             prev = b
 
     def decode(self, dec):
@@ -104,7 +142,8 @@ class EscapeModels:
         out = bytearray()
         prev = 0
         for _ in range(n):
-            b = self._ctx(prev).decode(dec)
+            hi = self._ctx((prev,)).decode(dec)
+            b = (hi << 4) | self._ctx((prev, hi)).decode(dec)
             out.append(b)
             prev = b
         return bytes(out)

@@ -64,12 +64,16 @@ latency deltas 108.7 KB. Network latency jitter is a noisier process
 than inter-arrival time. Kept: successive deltas. The bottom microsecond
 digit is uniform (3.32 bits) — genuinely incompressible noise.
 
-### Tick assumption is part of the v1 schema
-Prices are coded as 0.01-tick integers; a price with non-zero sub-tick
-digits makes the row non-conformant (escapes). The alternative — coding
-prices in 1e-8 units — would inflate every delta by 10⁶ (≈ +1 byte per
-delta ≈ +2 MB). A per-file tick parameter in the header is the obvious
-v2 extension if other symbols need it.
+### Per-file quantum exponents (reviewer directive, promoted to v1)
+Prices and sizes are coded as integer multiples of per-file quanta
+10^pexp / 10^sexp (in 1e-8 units), inferred from the first block and
+stored in the header — coding prices in raw 1e-8 units would inflate
+every delta by the quantum (≈ +1 byte per delta ≈ +2 MB on the BTC
+sample). Inference over the first block (~650k price tokens) makes a
+spuriously coarse quantum vanishingly unlikely; a later off-quantum
+row escapes rather than corrupting anything. Validated on
+SAMPLE_XRPUSDT.jsonl: tick inferred 1e-4, size step 1e-1, byte-exact
+round trip.
 
 ### Arithmetic coder, no Huffman fallback
 Witten–Neal–Cleary integer arithmetic coder with renormalisation and
@@ -88,6 +92,49 @@ conditional entropy given the model's context), measured per block to
 match the reset discipline. Coded size must land within 5% of this.
 This is the honest comparison: it scores the coder against the model it
 actually used, not against a weaker unconditioned model.
+
+### The 5% entropy-gap investigation (measured)
+First full benchmark (4096-line blocks): the four high-volume streams
+(96% of output) coded within 1.2% of their per-context conditional
+entropy, but seven sparse streams breached 5% (anchors +10.5%, u_gap
++10.3%, recv +6.9%, escape +13.4%). Hypotheses tested, in order:
+
+1. **Adaptation increment** (24 → 48 → 96 → 160): monotonically
+   *worse* (total gap +3.3% → +6.1% on XRPUSDT). Estimation noise and
+   window-shortening dominate the prior-mass effect. Rejected.
+2. **Alphabet size** (byte → nibble decomposition, low nibble
+   conditioned on high; identical conditional entropy by chain rule):
+   coded size moved ~0.06%. The warm-up cost is not the 256-symbol
+   uniform prior. Largely rejected — kept for the sparse streams and
+   escape (small but free win, ~0.2 KB), byte layout kept for the
+   high-volume streams (fewer coder ops).
+3. **Block size** (4096 → 8192 → 16384 lines): gaps fall roughly as
+   1/n (u_gap +9.5% → +6.4% → ≤5%; XRPUSDT fully passes at 16384).
+   This identified the true cause: **parametric redundancy** — the
+   first-occurrence tax a one-pass coder pays on each distinct symbol,
+   which the per-block empirical entropy (a two-pass oracle that knows
+   the counts in advance) never pays. ~K·log(n)/2n per symbol, hence
+   the 1/n scaling.
+
+Proof that the floor is real: per-stream Krichevsky–Trofimov bounds
+(minimax-optimal one-pass cost for the same contexts on the same
+data). At 16384-line blocks every stream codes within ±2.5% of KT;
+bid_delta sits exactly on it and escape *beats* KT by 5% (increment-24
+adapts faster than KT's +1/2 on repetitive JSON-ish text). The
+remaining >5% conditional-entropy flags (BTCUSDT: anchors ~+5.7%,
+escape +9.0%) are therefore the sequential-coding floor, not coder
+loss; the benchmark prints the KT column alongside the gap so the
+criterion is answered with a bound, not an excuse. Closing the
+residual would require either bigger blocks (less corruption
+localisation — reviewer chose 16384 as the balance point) or
+transmitting frequency tables (costs more than it saves at this
+block size).
+
+### Header integrity (reviewer amendment)
+The header originally had no CRC; a corrupted pexp/sexp would decode
+the whole file to plausible-but-wrong values with every block CRC
+passing. Header now carries its own CRC32 (magic through JSON),
+verified before any field is used.
 
 ## Where it would parallelise (not implemented)
 Blocks are independent after the header: encode could fan out blocks to

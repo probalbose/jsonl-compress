@@ -105,7 +105,7 @@ class ByteReader:
 
 
 def write_header(fout, schema):
-    """Magic, version byte, varint-length-prefixed JSON header."""
+    """Magic, version, varint-length JSON, then CRC32 of all of that."""
     if schema is None:
         meta = {"schema": None}
     else:
@@ -115,23 +115,43 @@ def write_header(fout, schema):
     head = bytearray(MAGIC)
     head.append(VERSION)
     append_uvarint(head, len(blob))
-    fout.write(bytes(head) + blob)
+    head += blob
+    head += crc32(head).to_bytes(4, "little")
+    fout.write(bytes(head))
 
 
 def read_header(fin):
-    """Returns the parsed header dict; raises FormatError on mismatch."""
-    magic = fin.read(4)
-    if magic != MAGIC:
-        raise FormatError(f"bad magic {magic!r}")
+    """Returns the parsed header dict; verifies the header CRC32."""
+    raw = bytearray(fin.read(4))
+    if bytes(raw) != MAGIC:
+        raise FormatError(f"bad magic {bytes(raw)!r}")
     ver = fin.read(1)
     if len(ver) != 1:
         raise FormatError("truncated header")
     if ver[0] != VERSION:
         raise FormatError(f"unsupported format version {ver[0]}")
-    n = read_uvarint_stream(fin)
+    raw += ver
+    n = shift = 0
+    while True:  # uvarint, keeping the raw bytes for the CRC
+        b = fin.read(1)
+        if not b:
+            raise FormatError("truncated header")
+        raw += b
+        n |= (b[0] & 0x7F) << shift
+        if not b[0] & 0x80:
+            break
+        shift += 7
+        if shift > 70:
+            raise FormatError("varint too long")
     blob = fin.read(n)
     if len(blob) != n:
         raise FormatError("truncated header JSON")
+    raw += blob
+    crc_bytes = fin.read(4)
+    if len(crc_bytes) != 4:
+        raise FormatError("truncated header CRC")
+    if crc32(raw) != int.from_bytes(crc_bytes, "little"):
+        raise CorruptBlockError("header CRC32 mismatch (corrupted header)")
     try:
         meta = json.loads(blob)
     except ValueError as exc:
