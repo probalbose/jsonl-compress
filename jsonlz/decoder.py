@@ -109,7 +109,15 @@ def decompress(in_path, out_path):
         s = meta["schema"]
         schema = None
         if s is not None:
-            schema = Schema(tuple(s["constants"]), s["pexp"], s["sexp"])
+            consts = s.get("constants") if isinstance(s, dict) else None
+            pexp, sexp = (s.get("pexp"), s.get("sexp")) if isinstance(
+                s, dict) else (None, None)
+            if (not isinstance(consts, list) or len(consts) != 4
+                    or not all(isinstance(x, str) for x in consts)
+                    or not (type(pexp) is int and 0 <= pexp <= 8)
+                    or not (type(sexp) is int and 0 <= sexp <= 8)):
+                raise FormatError("invalid schema in header")
+            schema = Schema(tuple(consts), pexp, sexp)
         block_index = 0
         while True:
             payload = read_block(fin, block_index)

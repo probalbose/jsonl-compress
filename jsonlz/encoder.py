@@ -2,8 +2,12 @@
 from .arith import Encoder
 from .codec import (EscapeModels, IntModels, NIBBLE_INT_STREAMS,
                     NIBBLE_SIZE_STREAMS, SizeModels)
-from .format import (append_uvarint, write_block, write_eof, write_header)
+from .format import (SEGMENT_NAMES, append_uvarint, write_block, write_eof,
+                     write_header)
 from .transforms import Schema, extract_candidate, infer_qexp, zigzag
+
+_INT_STREAMS = SEGMENT_NAMES[:10]
+_SIZE_STREAMS = SEGMENT_NAMES[10:12]
 
 # 16384-line blocks: large enough that adaptive warm-up redundancy per
 # context stays within the 5% entropy-gap budget (measured; NOTES.md),
@@ -61,10 +65,7 @@ def encode_block(lines, schema, stats=None):
     row-to-row references all start fresh (reviewer decision: localised
     corruption, parallel-decodable blocks)."""
     track = stats is not None
-    cols = {name: [] for name in
-            ("e_ms", "recv", "u_gap", "u_span", "len_b", "len_a",
-             "bid_anchor", "bid_delta", "ask_anchor", "ask_delta",
-             "size_b", "size_a")}
+    cols = {name: [] for name in _INT_STREAMS + _SIZE_STREAMS}
     esc_indices = []
     esc_blobs = []
     prev_e = prev_recv = prev_u = prev_bid = prev_ask = 0
@@ -104,12 +105,11 @@ def encode_block(lines, schema, stats=None):
             cols["size_a"].extend(s for _, s in asks)
 
     segments = []
-    for name in ("e_ms", "recv", "u_gap", "u_span", "len_b", "len_a",
-                 "bid_anchor", "bid_delta", "ask_anchor", "ask_delta"):
+    for name in _INT_STREAMS:
         seg, bank = _encode_int_segment(cols[name], track,
                                         name in NIBBLE_INT_STREAMS)
         segments.append((name, seg, bank))
-    for name in ("size_b", "size_a"):
+    for name in _SIZE_STREAMS:
         seg, bank = _encode_size_segment(cols[name], track,
                                          name in NIBBLE_SIZE_STREAMS)
         segments.append((name, seg, bank))

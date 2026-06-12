@@ -39,11 +39,9 @@ def synth_rows(rng, n, tick_exp=6, size_exp=3, symbol="BTCUSDT"):
         def size():
             return 0 if rng.random() < 0.4 else rng.randrange(1, 10**5)
 
-        q = 10 ** tick_exp
-        sq = 10 ** size_exp
         line = Schema(("orderbook_depth", symbol, "depthUpdate", symbol),
                       tick_exp, size_exp).render_row(
-            E, recv, U, u + 0,
+            E, recv, U, u,
             [(t, size()) for t in bticks], [(t, size()) for t in aticks])
         out.append(line)
         U = u
@@ -128,9 +126,11 @@ class TestAdversarial(RoundTripCase):
         self.roundtrip(b"".join(rows))
 
     def test_huge_numbers_escape(self):
+        # out-of-bound sequence number and a >=2^62 price token must both
+        # escape (not crash the integer coder)
         rows = synth_rows(random.Random(11), 8)
-        rows[1] = rows[1].replace(b'"U":', b'"U":9' + b"9" * 30 + b',"X":',
-                                  1).replace(b',"X":', b"", 1)
+        rows[1] = rows[1].replace(b'"U":', b'"U":' + b"9" * 31, 1)
+        rows[3] = rows[3].replace(b'["', b'["9' + b"9" * 18, 1)
         self.roundtrip(b"".join(rows))
 
 

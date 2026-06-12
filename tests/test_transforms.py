@@ -105,6 +105,10 @@ class TestRowExtractRender(unittest.TestCase):
             "event_time mismatch": base.replace(
                 b'"event_time":"2026-06-11T00:00:00.014000+00:00"',
                 b'"event_time":"2026-06-11T00:00:00.015000+00:00"'),
+            "price exceeds value bound": base.replace(
+                b'["61510.99000000"', b'["' + b"9" * 25 + b'.99000000"'),
+            "size exceeds value bound": base.replace(
+                b'"1.41173000"', b'"' + b"9" * 25 + b'.41173000"'),
         }
         for name, line in cases.items():
             self.assertIsNone(extract_candidate(line), name)

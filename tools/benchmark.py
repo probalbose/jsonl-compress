@@ -18,7 +18,7 @@ from collections import defaultdict
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from jsonlz.decoder import decompress
-from jsonlz.encoder import _infer_schema, compress
+from jsonlz.encoder import compress
 from jsonlz.transforms import extract_candidate, zigzag
 
 GAP_LIMIT = 5.0  # acceptance criterion: coded size within 5% of entropy

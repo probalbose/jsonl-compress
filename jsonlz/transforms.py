@@ -99,7 +99,7 @@ def _levels(raw):
             return None
         p = token_to_v8(entry[0])
         s = token_to_v8(entry[1])
-        if p is None or s is None or s >= VALUE_BOUND:
+        if p is None or s is None or p >= VALUE_BOUND or s >= VALUE_BOUND:
             return None
         out.append((p, s))
     return out

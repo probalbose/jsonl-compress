@@ -12,7 +12,7 @@ import json
 import math
 import sys
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timezone
 
 PATH = "samples/sample_BTCUSDT.jsonl"
 
@@ -117,7 +117,7 @@ def main():
             # is event_time exactly E rendered as ISO with +00:00 and 6 dp?
             et = o["event_time"]
             us = E * 1000
-            dt = datetime.utcfromtimestamp(us // 1_000_000)
+            dt = datetime.fromtimestamp(us // 1_000_000, tz=timezone.utc)
             rendered = dt.strftime("%Y-%m-%dT%H:%M:%S") + f".{us % 1_000_000:06d}+00:00"
             if rendered == et:
                 et_str_matches_E += 1
