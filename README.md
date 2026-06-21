@@ -90,3 +90,52 @@ tools/         profile_sample.py, benchmark.py (baselines need
 FORMAT.md      normative format spec (v1, frozen)
 NOTES.md       design log with measurements
 ```
+
+## OrderBookDynamics Integration
+
+`jsonlz` is used by the OrderBookDynamics platform as a cold-archive layer for
+raw Binance JSONL files.
+
+The hot ingestion path remains unchanged:
+
+```text
+Binance REST/WebSocket -> collectors -> TimescaleDB + raw JSONL
+```
+
+Compression runs only after files are cold:
+
+```text
+raw JSONL landing -> verified .jlz archive
+```
+
+The OrderBookDynamics helper script is:
+
+```sh
+scripts/compress_jsonl_archives.sh
+```
+
+Recommended production paths on `research-host-01`:
+
+```text
+/home/probal/jsonl-compress      # this repository
+/data/odb-raw/jsonl              # raw landing files
+/data/archive                    # verified .jlz files
+```
+
+Recommended development paths on the MacBook:
+
+```text
+~/projects/jsonl-compress
+~/OrderBookDynamicsData/data/jsonl
+~/OrderBookDynamicsData/archive
+```
+
+Operational policy:
+
+- keep raw JSONL by default;
+- compress only files older than the configured cold-file age;
+- verify every `.jlz` through byte-exact decompression before treating it as
+  archived;
+- do not delete raw files until restore and replay from `.jlz` archives are
+  part of the regular validation workflow.
+
